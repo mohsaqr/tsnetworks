@@ -1,0 +1,37 @@
+Package: tsnetworks
+Type: Package
+Title: Time Series Network Analysis
+Version: 1.0.0
+Author: Your Name
+Maintainer: Your Name <your.email@example.com>
+Description: Provides tools for calculating dynamic complexity measures, detecting
+    regime changes, and constructing networks from time series data. Implements
+    visibility graphs, rolling window complexity, and time series proximity networks.
+License: MIT + file LICENSE
+Encoding: UTF-8
+LazyData: true
+Depends: 
+    R (>= 3.5.0)
+Imports:
+    stats,
+    zoo,
+    graphics,
+    grDevices,
+    igraph,
+    dplyr,
+    qgraph,
+    proxy,
+    ggplot2,
+    aricode,
+    dtw,
+    dtwclust,
+    mclust,
+    minerva
+Suggests:
+    infotheo,
+    testthat,
+    knitr,
+    rmarkdown,
+    tsn
+RoxygenNote: 7.3.2
+VignetteBuilder: knitr

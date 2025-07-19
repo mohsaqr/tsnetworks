@@ -1,0 +1,61 @@
+---
+title: "Saqr_regime_Switching"
+output: html_document
+date: "2023-08-25"
+---
+
+```{r setup, include=FALSE}
+library(tidyverse)
+source("R/complex_dynamics.R")
+source("R/plotting.R")
+source("R/detect_regime.R")
+source("R/detect_regime_helpers.R")
+
+```
+
+
+```{r}
+Mydata <- readRDS("/Users/mohammedsaqr/Downloads/tsn_package/saqrsteps.RDS")
+MydataNA <- Mydata[7:861,]
+
+
+complexity_clean <- complex_dynamics(
+Mydata$Steps,
+measures = "complexity",
+window_width = 7,
+var_name = "Steps"
+) %>% drop_na()
+
+#cumulative_peaks, changepoint, threshold, variance_shift, smart, all
+# Enhanced regime detection with automatic parameters
+real_regimes <- detect_regime(
+  complexity_clean,
+  method = "smart",                    
+  sensitivity = "low",              # Medium sensitivity for real data
+  min_change_size = 7,              # Auto-detected
+  consolidate_similar = FALSE          # Keep all regimes initially
+)
+
+
+
+Withoriginal_real <- cbind(MydataNA, real_regimes)
+real_pattern_table <- table(real_regimes$complexity_pattern)
+print(real_pattern_table)
+
+real_stability_table <- table(real_regimes$regime_stability)
+print(real_stability_table)
+
+```
+
+
+```{r fig.height=12, fig.width=20}
+# Create plots for real data using the new package functions
+create_combined_plots(
+  Withoriginal_real, 
+  original_col = 'Steps', 
+  complexity_col = 'complexity_Steps', 
+  state_col = 'regime_stability'
+)
+
+```
+

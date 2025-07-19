@@ -1,0 +1,115 @@
+---
+title: "ts_proximity"
+output: html_document
+date: "2025-06-01"
+---
+
+```{r setup, include=FALSE}
+setwd("tsn_package")
+devtools::load_all()
+
+# Or if installed
+# library(tsn)
+
+Steps <- readRDS("saqrsteps.RDS")
+
+```
+
+
+
+```{r}
+
+# RECOMMENDED DEFAULT WORKFLOW
+dist_matrix <- ts_distance(Steps$Steps, method="euclidean", window_size=50, step_size=30, 
+                           pairwise=FALSE, symmetric=TRUE)
+network <- ts_network(dist_matrix)  # Uses "full" method by default
+plot_ts_network(network, threshold=0.1)  
+
+
+
+
+dist_matrix <- ts_distance(Steps$Steps, method="euclidean", window_size=50, step_size=30, 
+                           pairwise=TRUE, symmetric=TRUE)
+network <- ts_network(dist_matrix)  # Uses "full" method by default
+plot_ts_network(network, threshold=0.1)  
+
+
+```
+
+```{r}
+pattern_data <- c(sin(seq(0, 4*pi, length.out=30)) * 20 + 100, 
+                  cos(seq(0, 4*pi, length.out=30)) * 15 + 90)
+
+# Euclidean distance (standard)
+dist_euclidean <- ts_distance(pattern_data, method="euclidean", window_size=5, step_size=3, pairwise=FALSE, symmetric=TRUE)
+network_euclidean <- ts_network(dist_euclidean)
+plot_ts_network(network_euclidean, threshold=0.2, title="Euclidean Distance")
+
+# Cosine distance (shape similarity)
+dist_cosine <- ts_distance(pattern_data, method="cosine", window_size=5, step_size=3, pairwise=FALSE, symmetric=TRUE)
+network_cosine <- ts_network(dist_cosine)
+plot_ts_network(network_cosine, threshold=0.2, title="Cosine Distance")
+```
+
+
+```{r}
+process_data <- rnorm(50, 120, 25)
+process_dist <- ts_distance(process_data, method="euclidean", window_size=5, step_size=3, pairwise=FALSE, symmetric=TRUE)
+
+# Default: Full method (raw similarities)
+network_full <- ts_network(process_dist)  # Uses "full" by default
+plot_ts_network(network_full, threshold=0.15)
+
+# Optional: KNN processing
+network_knn <- ts_network(process_dist, method="knn", k=3)
+plot_ts_network(network_knn, title="KNN Processed")
+
+```
+
+```{r}
+# Stock price analysis
+stock_data <- cumsum(rnorm(80, 0.5, 2)) + 100
+stock_dist <- ts_distance(stock_data, method="euclidean", window_size=5, step_size=2, pairwise=FALSE, symmetric=TRUE)
+stock_network <- ts_network(stock_dist)
+plot_ts_network(stock_network, threshold=0.2, title="Stock Price Network")
+
+# Sensor data analysis
+sensor_data <- sin(seq(0, 6*pi, length.out=60)) * 10 + rnorm(60, 50, 3)
+sensor_dist <- ts_distance(sensor_data, method="euclidean", window_size=7, step_size=3, pairwise=FALSE, symmetric=TRUE)
+sensor_network <- ts_network(sensor_dist)
+plot_ts_network(sensor_network, threshold=0.2, title="Sensor Data Network")
+```
+
+
+
+
+```{r}
+# Get help and overview
+ts_info()
+
+# This displays:
+# === Time Series Network Analysis Package ===
+# 
+# DISTANCE FUNCTIONS:
+#   ts_distance 
+#   ts_distance_pair 
+#   ts_distance_methods 
+# 
+# NETWORK FUNCTIONS:
+#   ts_network 
+#   ts_network_auto 
+#   ts_network_methods 
+#   ts_network_recommend 
+# 
+# PLOTTING FUNCTIONS:
+#   ts_plot 
+#   ts_plot_compare 
+#   ts_plot_colors 
+# 
+# UTILITY FUNCTIONS:
+#   ts_check 
+#   ts_window_size 
+#   ts_distance_summary 
+#   ts_info 
+```
+
