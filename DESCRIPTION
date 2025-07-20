@@ -6,7 +6,9 @@ Author: Your Name
 Maintainer: Your Name <your.email@example.com>
 Description: Provides tools for calculating dynamic complexity measures, detecting
     regime changes, and constructing networks from time series data. Implements
-    visibility graphs, rolling window complexity, and time series proximity networks.
+    visibility graphs, rolling window complexity, time series proximity networks,
+    and comprehensive resilience analysis across absorptive, restorative, and
+    adaptive capacity dimensions.
 License: MIT + file LICENSE
 Encoding: UTF-8
 LazyData: true
@@ -27,7 +29,9 @@ Imports:
     dtwclust,
     mclust,
     minerva,
-    viridis
+    viridis,
+    gridExtra,
+    stringr
 Suggests:
     infotheo,
     testthat,

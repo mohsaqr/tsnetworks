@@ -1,0 +1,276 @@
+---
+title: "Resilience Analysis with TSnetworks"
+author: "TSnetworks Package"
+date: "`r Sys.Date()`"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Resilience Analysis with TSnetworks}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 7,
+  fig.height = 5
+)
+```
+
+```{r setup}
+library(tsnetworks)
+```
+
+# Introduction to Resilience Analysis
+
+The TSnetworks package now includes comprehensive resilience analysis capabilities that seamlessly integrate with existing time series network analysis functions. This vignette demonstrates how to perform resilience analysis across three key capacity dimensions:
+
+- **Absorptive Capacity**: The ability to absorb disturbances without changing state
+- **Restorative Capacity**: The ability to recover from disturbances  
+- **Adaptive Capacity**: The ability to adapt and evolve in response to disturbances
+
+## Basic Resilience Analysis
+
+Let's start with a simple example using the built-in `saqrsteps` dataset:
+
+```{r basic-example}
+# Load the example dataset
+data(saqrsteps)
+head(saqrsteps)
+
+# Calculate resilience metrics
+resilience_data <- calculate_resilience_metrics(
+  data = saqrsteps,
+  ts_cols = "Steps",
+  window_width = 7,
+  capacity_types = c("absorptive", "restorative", "adaptive")
+)
+
+# View the new resilience metric columns
+resilience_cols <- grep("^(absorptive|restorative|adaptive)_", names(resilience_data), value = TRUE)
+head(resilience_data[resilience_cols])
+```
+
+## Resilience State Classification
+
+After calculating resilience metrics, we can classify time points into distinct resilience states:
+
+```{r state-classification}
+# Classify resilience states
+state_data <- classify_resilience_states(
+  data = resilience_data,
+  method = "threshold",
+  capacity_weights = c(absorptive = 0.4, restorative = 0.3, adaptive = 0.3)
+)
+
+# View state distribution
+table(state_data$resilience_state, useNA = "ifany")
+
+# Get detailed state summary
+state_summary <- get_resilience_state_summary(state_data, ts_cols = "Steps")
+print(state_summary)
+```
+
+## Visualization
+
+The package provides several visualization functions that work seamlessly with existing TSnetworks plotting:
+
+```{r visualization, fig.width=8, fig.height=6}
+# Plot resilience capacity timeline
+plot_resilience_timeline(
+  data = state_data,
+  capacity_type = "all",
+  ts_col = "Steps",
+  state_col = "resilience_state",
+  title = "Resilience Capacity Timeline"
+)
+```
+
+```{r network-plot, fig.width=6, fig.height=6}
+# Plot resilience state transition network
+plot_resilience_network(
+  data = state_data,
+  state_col = "resilience_state",
+  node_size_by = "frequency",
+  title = "Resilience State Transition Network"
+)
+```
+
+## Integration with Existing TSnetworks Functions
+
+One of the key strengths of the resilience analysis is its seamless integration with existing TSnetworks functions:
+
+```{r integration}
+# Add resilience analysis to existing STNA result
+stna_result <- stna(saqrsteps, "Steps", num_states = 4, method = "quantile")
+enhanced_stna <- add_resilience_to_tsnetworks(stna_result)
+
+# The enhanced result works with all existing TSnetworks functions
+print(names(enhanced_stna))
+
+# Extract resilience-specific results
+resilience_summary <- extract_resilience_results(enhanced_stna, "summary")
+print(resilience_summary$n_states)
+```
+
+## Comprehensive Analysis Pipeline
+
+For complete analysis, use the integrated pipeline that combines multiple analysis types:
+
+```{r pipeline}
+# Run comprehensive analysis pipeline
+comprehensive_result <- resilience_analysis_pipeline(
+  data = saqrsteps,
+  ts_cols = "Steps",
+  analysis_types = c("resilience", "stna", "rolling"),
+  resilience_config = list(
+    window_width = 7,
+    capacity_types = c("absorptive", "restorative", "adaptive"),
+    state_method = "threshold"
+  ),
+  stna_config = list(
+    num_states = 4,
+    method = "quantile"
+  ),
+  rolling_config = list(
+    window_width = 7,
+    measures = c("complexity", "fluctuation", "distribution")
+  )
+)
+
+# View pipeline results
+print(comprehensive_result)
+```
+
+## Advanced Resilience Analysis
+
+### Custom Capacity Weights
+
+You can customize the relative importance of different capacity types:
+
+```{r custom-weights}
+# Emphasize absorptive capacity
+absorptive_focused <- classify_resilience_states(
+  data = resilience_data,
+  method = "composite",
+  capacity_weights = c(absorptive = 0.6, restorative = 0.2, adaptive = 0.2)
+)
+
+# Compare state distributions
+table(state_data$resilience_state)
+table(absorptive_focused$resilience_state)
+```
+
+### Different Classification Methods
+
+The package supports multiple state classification methods:
+
+```{r classification-methods}
+# K-means clustering approach
+kmeans_states <- classify_resilience_states(
+  data = resilience_data,
+  method = "kmeans",
+  n_states = 4
+)
+
+# Quantile-based approach
+quantile_states <- classify_resilience_states(
+  data = resilience_data,
+  method = "quantile",
+  n_states = 5
+)
+
+# Compare methods
+table(kmeans_states$resilience_state)
+table(quantile_states$resilience_state)
+```
+
+### Individual Capacity Analysis
+
+You can also analyze individual capacity types separately:
+
+```{r individual-capacity}
+# Focus on absorptive capacity only
+absorptive_data <- calculate_absorptive_capacity(
+  data = saqrsteps,
+  ts_cols = "Steps",
+  window_width = 7
+)
+
+# Focus on restorative capacity only
+restorative_data <- calculate_restorative_capacity(
+  data = saqrsteps,
+  ts_cols = "Steps",
+  window_width = 7
+)
+
+# Focus on adaptive capacity only
+adaptive_data <- calculate_adaptive_capacity(
+  data = saqrsteps,
+  ts_cols = "Steps",
+  window_width = 7
+)
+```
+
+## Working with Multiple Time Series
+
+The resilience analysis functions work seamlessly with multiple time series:
+
+```{r multiple-ts}
+# Create example data with multiple time series
+set.seed(123)
+multi_ts_data <- data.frame(
+  time = 1:100,
+  ts1 = cumsum(rnorm(100)),
+  ts2 = cumsum(rnorm(100, sd = 1.5)),
+  ts3 = sin(seq(0, 4*pi, length.out = 100)) + rnorm(100, 0, 0.2)
+)
+
+# Calculate resilience metrics for all time series
+multi_resilience <- calculate_resilience_metrics(
+  data = multi_ts_data,
+  ts_cols = c("ts1", "ts2", "ts3"),
+  window_width = 10
+)
+
+# Classify states
+multi_states <- classify_resilience_states(multi_resilience)
+
+# View results
+table(multi_states$resilience_state)
+```
+
+## Compatibility with Existing Workflows
+
+The resilience analysis maintains full compatibility with existing TSnetworks workflows:
+
+```{r compatibility}
+# Format resilience data for existing TSnetworks functions
+formatted_data <- format_for_tsnetworks(
+  resilience_data = state_data,
+  target_format = "generic"
+)
+
+# This data now works with any existing TSnetworks plotting function
+# For example, if plot_timeseries_enhanced exists:
+# plot_timeseries_enhanced(formatted_data, ts_col = "Steps", state_col = "resilience_state")
+```
+
+## Conclusion
+
+The resilience analysis capabilities in TSnetworks provide:
+
+1. **Comprehensive Metrics**: Three capacity dimensions with multiple metrics each
+2. **Flexible Classification**: Multiple methods for state classification
+3. **Seamless Integration**: Works with all existing TSnetworks functions
+4. **Rich Visualization**: Specialized plots for resilience analysis
+5. **Pipeline Approach**: Integrated analysis combining multiple methodologies
+
+This makes TSnetworks a complete solution for both traditional time series network analysis and modern resilience assessment.
+
+## Further Reading
+
+- For more details on individual capacity metrics, see the function documentation
+- For network analysis integration, see the "Time Series Network Analysis" vignette
+- For advanced visualization options, see the "Plotting and Visualization" vignette
