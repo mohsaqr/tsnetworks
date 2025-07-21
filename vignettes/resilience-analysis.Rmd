@@ -10,15 +10,15 @@ vignette: >
 ---
 
 ```{r, include = FALSE}
+remotes::install_github("mohsaqr/tsnetworks")
+
 knitr::opts_chunk$set(
   collapse = TRUE,
   comment = "#>",
   fig.width = 7,
   fig.height = 5
 )
-```
 
-```{r setup}
 library(tsnetworks)
 ```
 
