@@ -309,13 +309,14 @@ calculate_adaptive_capacity <- function(data,
   
   for (col in ts_cols) {
     
+    # Initialize result vectors
+    vsi_values <- numeric(nrow(data))
+    arch_values <- numeric(nrow(data))
+    cv_values <- numeric(nrow(data))
+    
     if (use_grouping) {
       # Grouped calculation
       groups <- split(data, data[[id_col]], drop = TRUE)
-      
-      vsi_values <- numeric(nrow(data))
-      arch_values <- numeric(nrow(data))
-      cv_values <- numeric(nrow(data))
       
       for (group_name in names(groups)) {
         group_data <- groups[[group_name]]
@@ -370,13 +371,14 @@ calculate_adaptive_capacity <- function(data,
   
   for (col in ts_cols) {
     
+    # Initialize result vectors
+    recovery_time_values <- numeric(nrow(data))
+    eng_resilience_values <- numeric(nrow(data))
+    recovery_slope_values <- numeric(nrow(data))
+    
     if (use_grouping) {
       # Grouped calculation
       groups <- split(data, data[[id_col]], drop = TRUE)
-      
-      recovery_time_values <- numeric(nrow(data))
-      eng_resilience_values <- numeric(nrow(data))
-      recovery_slope_values <- numeric(nrow(data))
       
       for (group_name in names(groups)) {
         group_data <- groups[[group_name]]
@@ -431,13 +433,14 @@ calculate_adaptive_capacity <- function(data,
   
   for (col in ts_cols) {
     
+    # Initialize result vectors
+    sample_entropy_values <- numeric(nrow(data))
+    dfa_values <- numeric(nrow(data))
+    capacity_ratio_values <- numeric(nrow(data))
+    
     if (use_grouping) {
       # Grouped calculation
       groups <- split(data, data[[id_col]], drop = TRUE)
-      
-      sample_entropy_values <- numeric(nrow(data))
-      dfa_values <- numeric(nrow(data))
-      capacity_ratio_values <- numeric(nrow(data))
       
       for (group_name in names(groups)) {
         group_data <- groups[[group_name]]

@@ -9,7 +9,7 @@ vignette: >
   %\VignetteEncoding{UTF-8}
 ---
 
-```{r, include = FALSE}
+```{r}
 remotes::install_github("mohsaqr/tsnetworks")
 
 knitr::opts_chunk$set(
