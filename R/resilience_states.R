@@ -1,3 +1,145 @@
+#' Diagnose Resilience Metrics Data
+#'
+#' @description
+#' Diagnostic function to check resilience metrics data quality and help troubleshoot
+#' state classification issues.
+#'
+#' @param data Data frame with resilience metrics
+#' @param ts_cols Time series columns that were used for resilience calculation
+#'
+#' @return List with diagnostic information
+#'
+#' @examples
+#' data(saqrsteps)
+#' resilience_data <- calculate_resilience_metrics(saqrsteps[1:100,], ts_cols = "Steps")
+#' diagnosis <- diagnose_resilience_data(resilience_data, ts_cols = "Steps")
+#' print(diagnosis)
+#'
+#' @export
+diagnose_resilience_data <- function(data, ts_cols = NULL) {
+  
+  # Auto-detect ts_cols if needed
+  if (is.null(ts_cols)) {
+    resilience_cols <- grep("^(absorptive|restorative|adaptive)_", names(data), value = TRUE)
+    if (length(resilience_cols) > 0) {
+      ts_cols <- unique(gsub("^(absorptive|restorative|adaptive)_[^_]+_", "", resilience_cols))
+    } else {
+      ts_cols <- names(data)[sapply(data, is.numeric)]
+    }
+  }
+  
+  diagnosis <- list(
+    data_summary = list(
+      n_rows = nrow(data),
+      n_cols = ncol(data),
+      ts_cols = ts_cols
+    ),
+    resilience_metrics = list()
+  )
+  
+  # Check each capacity type
+  for (capacity in c("absorptive", "restorative", "adaptive")) {
+    capacity_cols <- grep(paste0("^", capacity, "_"), names(data), value = TRUE)
+    
+    if (length(capacity_cols) > 0) {
+      capacity_info <- list(
+        columns = capacity_cols,
+        na_counts = sapply(capacity_cols, function(col) sum(is.na(data[[col]]))),
+        valid_counts = sapply(capacity_cols, function(col) sum(!is.na(data[[col]]))),
+        value_ranges = list()
+      )
+      
+      for (col in capacity_cols) {
+        if (sum(!is.na(data[[col]])) > 0) {
+          capacity_info$value_ranges[[col]] <- list(
+            min = min(data[[col]], na.rm = TRUE),
+            max = max(data[[col]], na.rm = TRUE),
+            mean = mean(data[[col]], na.rm = TRUE),
+            n_valid = sum(!is.na(data[[col]]))
+          )
+        }
+      }
+      
+      diagnosis$resilience_metrics[[capacity]] <- capacity_info
+    }
+  }
+  
+  # Overall assessment
+  all_resilience_cols <- grep("^(absorptive|restorative|adaptive)_", names(data), value = TRUE)
+  if (length(all_resilience_cols) > 0) {
+    total_values <- length(all_resilience_cols) * nrow(data)
+    total_na <- sum(sapply(all_resilience_cols, function(col) sum(is.na(data[[col]]))))
+    
+    diagnosis$overall_assessment <- list(
+      total_metric_values = total_values,
+      total_na_values = total_na,
+      percent_na = round(total_na / total_values * 100, 2),
+      sufficient_data = (total_na / total_values) < 0.8,
+      recommendations = character(0)
+    )
+    
+    # Add recommendations
+    if ((total_na / total_values) > 0.8) {
+      diagnosis$overall_assessment$recommendations <- c(
+        diagnosis$overall_assessment$recommendations,
+        "Too many NA values - consider using smaller window_width or larger dataset"
+      )
+    }
+    
+    if (nrow(data) < 20) {
+      diagnosis$overall_assessment$recommendations <- c(
+        diagnosis$overall_assessment$recommendations,
+        "Very small dataset - resilience analysis works better with larger time series"
+      )
+    }
+    
+    if (length(diagnosis$overall_assessment$recommendations) == 0) {
+      diagnosis$overall_assessment$recommendations <- "Data looks suitable for state classification"
+    }
+  }
+  
+  class(diagnosis) <- c("resilience_diagnosis", "list")
+  return(diagnosis)
+}
+
+#' Print method for resilience_diagnosis objects
+#' @param x A resilience_diagnosis object
+#' @param ... Additional arguments (unused)
+#' @export
+print.resilience_diagnosis <- function(x, ...) {
+  cat("Resilience Data Diagnosis\n")
+  cat("=========================\n")
+  cat("Dataset:", x$data_summary$n_rows, "rows x", x$data_summary$n_cols, "columns\n")
+  cat("Time series columns:", paste(x$data_summary$ts_cols, collapse = ", "), "\n\n")
+  
+  for (capacity in names(x$resilience_metrics)) {
+    cap_info <- x$resilience_metrics[[capacity]]
+    cat(toupper(capacity), "CAPACITY:\n")
+    cat("  Columns:", length(cap_info$columns), "\n")
+    cat("  NA values:", paste(cap_info$na_counts, collapse = ", "), "\n")
+    cat("  Valid values:", paste(cap_info$valid_counts, collapse = ", "), "\n")
+    
+    if (length(cap_info$value_ranges) > 0) {
+      cat("  Value ranges:\n")
+      for (col_name in names(cap_info$value_ranges)) {
+        range_info <- cap_info$value_ranges[[col_name]]
+        cat("    ", col_name, ": [", round(range_info$min, 3), ", ", 
+            round(range_info$max, 3), "] (n=", range_info$n_valid, ")\n", sep="")
+      }
+    }
+    cat("\n")
+  }
+  
+  if (!is.null(x$overall_assessment)) {
+    cat("OVERALL ASSESSMENT:\n")
+    cat("  Total NA values:", x$overall_assessment$total_na_values, "/", 
+        x$overall_assessment$total_metric_values, 
+        " (", x$overall_assessment$percent_na, "%)\n")
+    cat("  Sufficient data:", x$overall_assessment$sufficient_data, "\n")
+    cat("  Recommendations:", paste(x$overall_assessment$recommendations, collapse = "; "), "\n")
+  }
+}
+
 #' Classify Resilience States for TSnetworks
 #'
 #' @description
@@ -63,18 +205,37 @@ classify_resilience_states <- function(data,
     }
   }
   
+  # Check data quality first
+  diagnosis <- diagnose_resilience_data(data, ts_cols)
+  
+  if (!diagnosis$overall_assessment$sufficient_data) {
+    warning("Insufficient resilience data for reliable state classification. ",
+            paste(diagnosis$overall_assessment$recommendations, collapse = " "),
+            call. = FALSE)
+  }
+  
   # Calculate composite capacity scores
   capacity_scores <- .calculate_composite_capacity_scores(data, ts_cols, capacity_weights)
   
-  # Classify states based on method
-  if (method == "threshold") {
-    state_classifications <- .classify_states_threshold(capacity_scores, threshold_values)
-  } else if (method == "kmeans") {
-    state_classifications <- .classify_states_kmeans(capacity_scores, n_states)
-  } else if (method == "quantile") {
-    state_classifications <- .classify_states_quantile(capacity_scores, n_states)
-  } else if (method == "composite") {
-    state_classifications <- .classify_states_composite(capacity_scores, threshold_values)
+  # Check if we have enough valid composite scores
+  valid_composite <- sum(!is.na(capacity_scores$composite))
+  if (valid_composite < 5) {
+    warning("Very few valid composite scores (", valid_composite, "). ",
+            "Consider using a smaller window_width or larger dataset.", call. = FALSE)
+    
+    # Create a simple fallback classification
+    state_classifications <- .create_fallback_classification(capacity_scores, nrow(data))
+  } else {
+    # Classify states based on method
+    if (method == "threshold") {
+      state_classifications <- .classify_states_threshold(capacity_scores, threshold_values)
+    } else if (method == "kmeans") {
+      state_classifications <- .classify_states_kmeans(capacity_scores, n_states)
+    } else if (method == "quantile") {
+      state_classifications <- .classify_states_quantile(capacity_scores, n_states)
+    } else if (method == "composite") {
+      state_classifications <- .classify_states_composite(capacity_scores, threshold_values)
+    }
   }
   
   # Add state classifications to data
@@ -763,8 +924,17 @@ print.resilience_states <- function(x, ...) {
     }
   }
   
-  cat("\nFirst few rows:\n")
-  print(head(x))
+  # Show a compact view of the data instead of all columns
+  cat("\nFirst few rows (key columns only):\n")
+  key_cols <- c(states_info$state_column_name, 
+                paste0(states_info$state_column_name, "_composite_score"))
+  key_cols <- key_cols[key_cols %in% names(x)]
+  
+  if (length(key_cols) > 0) {
+    print(head(x[, key_cols, drop = FALSE]))
+  } else {
+    cat("  No state columns found\n")
+  }
 }
 
 #' Print method for resilience_state_summary objects
@@ -791,4 +961,47 @@ print.resilience_state_summary <- function(x, ...) {
   
   cat("\nTransition Matrix:\n")
   print(round(x$transition_matrix, 3))
+}
+
+# Helper function for cases with insufficient data
+.create_fallback_classification <- function(capacity_scores, n_rows) {
+  
+  # Create basic classification based on available data
+  main_state <- rep("resilient_unknown", n_rows)
+  absorptive_state <- rep("absorptive_unknown", n_rows)
+  restorative_state <- rep("restorative_unknown", n_rows)
+  adaptive_state <- rep("adaptive_unknown", n_rows)
+  
+  # Try to classify what we can based on individual metrics
+  if (sum(!is.na(capacity_scores$absorptive)) > 0) {
+    abs_median <- median(capacity_scores$absorptive, na.rm = TRUE)
+    absorptive_state[capacity_scores$absorptive >= abs_median & !is.na(capacity_scores$absorptive)] <- "absorptive_high"
+    absorptive_state[capacity_scores$absorptive < abs_median & !is.na(capacity_scores$absorptive)] <- "absorptive_low"
+  }
+  
+  if (sum(!is.na(capacity_scores$restorative)) > 0) {
+    res_median <- median(capacity_scores$restorative, na.rm = TRUE)
+    restorative_state[capacity_scores$restorative >= res_median & !is.na(capacity_scores$restorative)] <- "restorative_high"
+    restorative_state[capacity_scores$restorative < res_median & !is.na(capacity_scores$restorative)] <- "restorative_low"
+  }
+  
+  if (sum(!is.na(capacity_scores$adaptive)) > 0) {
+    ada_median <- median(capacity_scores$adaptive, na.rm = TRUE)
+    adaptive_state[capacity_scores$adaptive >= ada_median & !is.na(capacity_scores$adaptive)] <- "adaptive_high"
+    adaptive_state[capacity_scores$adaptive < ada_median & !is.na(capacity_scores$adaptive)] <- "adaptive_low"
+  }
+  
+  # Try to create a simple main state classification
+  if (sum(!is.na(capacity_scores$composite)) > 0) {
+    comp_median <- median(capacity_scores$composite, na.rm = TRUE)
+    main_state[capacity_scores$composite >= comp_median & !is.na(capacity_scores$composite)] <- "resilient_moderate"
+    main_state[capacity_scores$composite < comp_median & !is.na(capacity_scores$composite)] <- "resilient_low"
+  }
+  
+  return(list(
+    main_state = main_state,
+    absorptive_state = absorptive_state,
+    restorative_state = restorative_state,
+    adaptive_state = adaptive_state
+  ))
 }
