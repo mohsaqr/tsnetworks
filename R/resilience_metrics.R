@@ -519,7 +519,7 @@ calculate_adaptive_capacity <- function(data,
     x,
     width = window_width,
     FUN = function(vals) {
-      if (length(vals) < 3 || all(is.na(vals))) return(NA_real_)
+      if (length(vals) < max(3, window_width/4) || all(is.na(vals))) return(NA_real_)  # Reduced minimum requirement
       var(vals, na.rm = TRUE)
     },
     partial = TRUE,
@@ -547,7 +547,7 @@ calculate_adaptive_capacity <- function(data,
     x,
     width = window_width,
     FUN = function(vals) {
-      if (length(vals) < 6 || all(is.na(vals))) return(NA_real_)
+      if (length(vals) < max(4, window_width/4) || all(is.na(vals))) return(NA_real_)  # Reduced from 6 to 4
       
       tryCatch({
         # SCIENTIFIC CORRECTION: Proper ARCH test procedure
@@ -645,7 +645,7 @@ calculate_adaptive_capacity <- function(data,
     x,
     width = window_width,
     FUN = function(vals) {
-      if (length(vals) < 8 || all(is.na(vals))) return(NA_real_)
+      if (length(vals) < max(4, window_width/4) || all(is.na(vals))) return(NA_real_)  # Reduced from 8
       
       tryCatch({
         # SCIENTIFIC CORRECTION: Proper autoregressive analysis
@@ -701,14 +701,15 @@ calculate_adaptive_capacity <- function(data,
         # Half-life = ln(0.5) / ln(|φ|)
         half_life <- log(0.5) / log(abs(ar_coef))
         
-        # Validate result
+        # Validate result and handle infinite values
         if (is.infinite(half_life) || is.nan(half_life) || half_life <= 0) {
           return(NA_real_)
         }
         
-        # Cap at reasonable maximum (e.g., window width)
-        if (half_life > window_width * 2) {
-          return(window_width * 2)
+        # Cap at reasonable maximum (e.g., 5 times window width)
+        max_recovery_time <- window_width * 5
+        if (half_life > max_recovery_time) {
+          return(max_recovery_time)
         }
         
         return(half_life)
@@ -748,7 +749,7 @@ calculate_adaptive_capacity <- function(data,
     x,
     width = window_width,
     FUN = function(vals) {
-      if (length(vals) < pattern_length + 10 || all(is.na(vals))) return(NA_real_)
+      if (length(vals) < pattern_length + max(4, window_width/4) || all(is.na(vals))) return(NA_real_)  # Reduced from 10
       
       tryCatch({
         # SCIENTIFIC CORRECTION: Proper sample entropy algorithm
@@ -851,7 +852,7 @@ calculate_adaptive_capacity <- function(data,
     x,
     width = window_width,
     FUN = function(vals) {
-      if (length(vals) < 16 || all(is.na(vals))) return(NA_real_)
+      if (length(vals) < max(8, window_width/2) || all(is.na(vals))) return(NA_real_)  # Reduced from 16
       
       tryCatch({
         # SCIENTIFIC CORRECTION: Proper DFA implementation
@@ -994,7 +995,7 @@ calculate_adaptive_capacity <- function(data,
     x,
     width = window_width,
     FUN = function(vals) {
-      if (length(vals) < 10 || all(is.na(vals))) return(NA_real_)
+      if (length(vals) < max(6, window_width/3) || all(is.na(vals))) return(NA_real_)  # Reduced from 10
       
       tryCatch({
         # SCIENTIFIC CORRECTION: Proper recovery analysis
@@ -1096,37 +1097,174 @@ calculate_adaptive_capacity <- function(data,
 }
 
 #' Print method for resilience_data objects
-#' @param x A resilience_data object
-#' @param ... Additional arguments (unused)
+#' @param x resilience_data object
+#' @param ... additional arguments
 #' @export
 print.resilience_data <- function(x, ...) {
-  cat("Resilience Analysis Data\n")
-  cat("========================\n")
+  cat("🎯 Resilience Analysis Results\n")
+  cat("==============================\n\n")
   
-  # Get resilience analysis info
-  resilience_info <- attr(x, "resilience_analysis")
-  
-  if (!is.null(resilience_info)) {
-    cat("Capacity types analyzed:", paste(resilience_info$capacity_types, collapse = ", "), "\n")
-    cat("Time series columns:", paste(resilience_info$ts_cols, collapse = ", "), "\n")
-    cat("Window width:", resilience_info$window_width, "\n")
-    cat("Scaling method:", resilience_info$scaling_method, "\n")
-    cat("Analysis timestamp:", format(resilience_info$analysis_timestamp), "\n")
+  # Get attributes
+  analysis_info <- attr(x, "resilience_analysis")
+  if (!is.null(analysis_info)) {
+    cat("📋 Analysis Configuration:\n")
+    cat("  • Capacity types: ", paste(analysis_info$capacity_types, collapse = ", "), "\n")
+    cat("  • Time series columns: ", paste(analysis_info$ts_cols, collapse = ", "), "\n") 
+    cat("  • Window width: ", analysis_info$window_width, "\n")
+    cat("  • Scaling method: ", analysis_info$scaling_method, "\n\n")
   }
   
-  cat("Dimensions:", nrow(x), "x", ncol(x), "\n")
+  # Data dimensions
+  cat("📊 Data Summary:\n")
+  cat("  • Rows: ", nrow(x), "\n")
+  cat("  • Total columns: ", ncol(x), "\n")
   
-  # Identify resilience columns
+  # Find resilience columns
   resilience_cols <- grep("^(absorptive|restorative|adaptive)_", names(x), value = TRUE)
+  cat("  • Resilience metrics: ", length(resilience_cols), "\n\n")
+  
+  # Show metrics by category
   if (length(resilience_cols) > 0) {
-    cat("Resilience metrics columns:", length(resilience_cols), "\n")
-    if (length(resilience_cols) <= 10) {
-      cat("  ", paste(resilience_cols, collapse = ", "), "\n")
-    } else {
-      cat("  ", paste(resilience_cols[1:10], collapse = ", "), "...\n")
+    abs_cols <- grep("^absorptive_", resilience_cols, value = TRUE)
+    rest_cols <- grep("^restorative_", resilience_cols, value = TRUE) 
+    adapt_cols <- grep("^adaptive_", resilience_cols, value = TRUE)
+    
+    if (length(abs_cols) > 0) {
+      cat("🛡️  Absorptive Capacity (", length(abs_cols), " metrics):\n")
+      cat("    ", paste(gsub("absorptive_|_.*", "", abs_cols), collapse = ", "), "\n\n")
+    }
+    if (length(rest_cols) > 0) {
+      cat("🔄 Restorative Capacity (", length(rest_cols), " metrics):\n")
+      cat("    ", paste(gsub("restorative_|_.*", "", rest_cols), collapse = ", "), "\n\n")
+    }
+    if (length(adapt_cols) > 0) {
+      cat("🔀 Adaptive Capacity (", length(adapt_cols), " metrics):\n")
+      cat("    ", paste(gsub("adaptive_|_.*", "", adapt_cols), collapse = ", "), "\n\n")
     }
   }
   
-  cat("\nFirst few rows:\n")
-  print(head(x))
+  # Count non-NA values
+  if (length(resilience_cols) > 0) {
+    non_na_counts <- sapply(resilience_cols, function(col) sum(!is.na(x[[col]])))
+    coverage <- round(mean(non_na_counts) / nrow(x) * 100, 1)
+    cat("📈 Data Coverage: ", coverage, "% (avg. non-NA values)\n\n")
+  }
+  
+  cat("💡 Next Steps:\n")
+  cat("  • Use as_clean_dataframe(result) for a clean data.frame\n")
+  cat("  • Use summary(result) for detailed statistics\n")
+  cat("  • Access metrics: result$absorptive_vsi_[column_name]\n")
+  
+  invisible(x)
+}
+
+#' Summary method for resilience_data objects
+#' @param object resilience_data object
+#' @param ... additional arguments
+#' @export
+summary.resilience_data <- function(object, ...) {
+  cat("📊 Resilience Analysis Summary\n")
+  cat("=============================\n\n")
+  
+  # Get analysis info
+  analysis_info <- attr(object, "resilience_analysis")
+  if (!is.null(analysis_info)) {
+    cat("🔧 Configuration:\n")
+    cat("  Window width:", analysis_info$window_width, "\n")
+    cat("  Scaling method:", analysis_info$scaling_method, "\n")
+    cat("  Time series:", paste(analysis_info$ts_cols, collapse = ", "), "\n\n")
+  }
+  
+  # Find resilience columns
+  resilience_cols <- grep("^(absorptive|restorative|adaptive)_", names(object), value = TRUE)
+  
+  if (length(resilience_cols) == 0) {
+    cat("No resilience metrics found.\n")
+    return(invisible(object))
+  }
+  
+  # Calculate summary statistics for each metric
+  cat("📈 Metric Statistics:\n")
+  cat("===================\n\n")
+  
+  for (col in resilience_cols) {
+    values <- object[[col]]
+    non_na_count <- sum(!is.na(values))
+    total_count <- length(values)
+    coverage <- round(non_na_count / total_count * 100, 1)
+    
+    cat("🔹", col, "\n")
+    cat("   Coverage: ", coverage, "% (", non_na_count, "/", total_count, ")\n")
+    
+    if (non_na_count > 0) {
+      valid_values <- values[!is.na(values)]
+      cat("   Range: [", round(min(valid_values), 3), ", ", round(max(valid_values), 3), "]\n")
+      cat("   Mean: ", round(mean(valid_values), 3), " ± ", round(sd(valid_values), 3), "\n")
+      cat("   Median: ", round(median(valid_values), 3), "\n")
+    } else {
+      cat("   No valid values\n")
+    }
+    cat("\n")
+  }
+  
+  # Overall summary
+  all_coverages <- sapply(resilience_cols, function(col) {
+    sum(!is.na(object[[col]])) / length(object[[col]]) * 100
+  })
+  
+  cat("🎯 Overall Summary:\n")
+  cat("   Average coverage: ", round(mean(all_coverages), 1), "%\n")
+  cat("   Best metric: ", names(which.max(all_coverages)), " (", round(max(all_coverages), 1), "%)\n")
+  cat("   Worst metric: ", names(which.min(all_coverages)), " (", round(min(all_coverages), 1), "%)\n")
+  
+  invisible(object)
+}
+
+#' Convert resilience results to clean data frame
+#'
+#' @description
+#' Converts resilience analysis results to a clean data frame without 
+#' special attributes or classes for easier manipulation.
+#'
+#' @param x resilience_data object from calculate_resilience_metrics()
+#' @param include_original Whether to include original time series columns (default: TRUE)
+#' @param include_scaling Whether to include scaling attributes as columns (default: FALSE)
+#'
+#' @return Clean data frame with resilience metrics
+#' @export
+as_clean_dataframe <- function(x, include_original = TRUE, include_scaling = FALSE) {
+  
+  if (!inherits(x, "resilience_data")) {
+    stop("Input must be a resilience_data object")
+  }
+  
+  # Get analysis info
+  analysis_info <- attr(x, "resilience_analysis")
+  
+  # Create base data frame by manually extracting columns
+  col_names <- names(x)
+  result <- data.frame(row.names = rownames(x))
+  
+  # Copy each column manually to avoid any method dispatch issues
+  for (col in col_names) {
+    result[[col]] <- x[[col]]
+  }
+  
+  # Optionally remove original time series columns
+  if (!include_original && !is.null(analysis_info$ts_cols)) {
+    orig_cols <- analysis_info$ts_cols
+    orig_cols <- orig_cols[orig_cols %in% names(result)]
+    if (length(orig_cols) > 0) {
+      result <- result[, !names(result) %in% orig_cols, drop = FALSE]
+    }
+  }
+  
+  # Optionally add scaling info as metadata columns
+  if (include_scaling && !is.null(analysis_info)) {
+    result$analysis_window_width <- analysis_info$window_width
+    result$analysis_scaling_method <- analysis_info$scaling_method
+    result$analysis_timestamp <- analysis_info$analysis_timestamp
+  }
+  
+  return(result)
 }
