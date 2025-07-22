@@ -7,6 +7,8 @@
 
 # User-specific files
 .Ruserdata
+CRAN_Readiness_Report.mdHurst.rTodo2.r
+todo.md
 
 # Example code in package build process
 *-Ex.R

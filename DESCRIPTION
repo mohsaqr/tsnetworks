@@ -31,7 +31,9 @@ Imports:
     minerva,
     viridis,
     gridExtra,
-    stringr
+    stringr,
+    MASS,
+    psych
 Suggests:
     infotheo,
     testthat,

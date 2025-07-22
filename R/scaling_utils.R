@@ -53,10 +53,13 @@ apply_scaling <- function(x,
   original_length <- length(x)
   
   # Handle NA values
-  if (any(is.na(x))) {
+  na_positions <- is.na(x)
+  
+  if (any(na_positions)) {
     if (na_action == "omit") {
-      x <- x[!is.na(x)]
-      if (length(x) == 0) {
+      # Scale only non-NA values, preserve positions
+      x_clean <- x[!na_positions]
+      if (length(x_clean) == 0) {
         stop("All values are NA after omitting")
       }
     } else if (na_action == "interpolate") {
@@ -77,6 +80,8 @@ apply_scaling <- function(x,
     } else if (na_action == "median") {
       x[is.na(x)] <- median(x, na.rm = TRUE)
     }
+  } else {
+    x_clean <- x
   }
   
   # Store original statistics
@@ -92,11 +97,24 @@ apply_scaling <- function(x,
   )
   
   # Apply scaling method
-  scaled_x <- x
+  if (na_action == "omit" && any(na_positions)) {
+    # Use x_clean for calculations
+    calc_x <- x_clean
+  } else {
+    # Use full x for calculations  
+    calc_x <- x
+  }
+  
+  scaled_x <- rep(NA_real_, original_length)  # Initialize with NAs
   scaling_params <- list(method = method)
   
   if (method == "none") {
     # No scaling
+    if (na_action == "omit" && any(na_positions)) {
+      scaled_x[!na_positions] <- calc_x
+    } else {
+      scaled_x <- calc_x
+    }
     scaling_params$center <- 0
     scaling_params$scale <- 1
     
@@ -112,30 +130,46 @@ apply_scaling <- function(x,
     scaling_params$scale <- 1
     
   } else if (method == "standardize") {
-    # Z-score standardization
-    center_val <- if (robust_center) median(x, na.rm = TRUE) else mean(x, na.rm = TRUE)
-    scale_val <- if (robust_center) IQR(x, na.rm = TRUE) else sd(x, na.rm = TRUE)
+    # Z-score normalization
+    center_val <- ifelse(robust_center, median(calc_x, na.rm = TRUE), mean(calc_x, na.rm = TRUE))
+    scale_val <- sd(calc_x, na.rm = TRUE)
     
-    if (scale_val == 0) {
+    if (scale_val == 0 || is.na(scale_val)) {
       warning("Scale value is zero. Using centering only.")
-      scaled_x <- x - center_val
+      if (na_action == "omit" && any(na_positions)) {
+        scaled_x[!na_positions] <- calc_x - center_val
+      } else {
+        scaled_x <- calc_x - center_val
+      }
       scaling_params$scale <- 1
     } else {
-      scaled_x <- (x - center_val) / scale_val
+      if (na_action == "omit" && any(na_positions)) {
+        scaled_x[!na_positions] <- (calc_x - center_val) / scale_val
+      } else {
+        scaled_x <- (calc_x - center_val) / scale_val
+      }
       scaling_params$scale <- scale_val
     }
     scaling_params$center <- center_val
     
   } else if (method == "minmax") {
     # Min-max scaling to [0, 1]
-    min_val <- min(x, na.rm = TRUE)
-    max_val <- max(x, na.rm = TRUE)
+    min_val <- min(calc_x, na.rm = TRUE)
+    max_val <- max(calc_x, na.rm = TRUE)
     
     if (min_val == max_val) {
       warning("Min and max values are equal. Using centering only.")
-      scaled_x <- x - min_val
+      if (na_action == "omit" && any(na_positions)) {
+        scaled_x[!na_positions] <- calc_x - min_val
+      } else {
+        scaled_x <- calc_x - min_val
+      }
     } else {
-      scaled_x <- (x - min_val) / (max_val - min_val)
+      if (na_action == "omit" && any(na_positions)) {
+        scaled_x[!na_positions] <- (calc_x - min_val) / (max_val - min_val)
+      } else {
+        scaled_x <- (calc_x - min_val) / (max_val - min_val)
+      }
     }
     scaling_params$center <- min_val
     scaling_params$scale <- max_val - min_val
@@ -144,37 +178,57 @@ apply_scaling <- function(x,
     
   } else if (method == "iqr") {
     # IQR-based scaling (robust to outliers)
-    center_val <- median(x, na.rm = TRUE)
-    scale_val <- IQR(x, na.rm = TRUE)
+    center_val <- median(calc_x, na.rm = TRUE)
+    scale_val <- IQR(calc_x, na.rm = TRUE)
     
     if (scale_val == 0) {
       warning("IQR is zero. Using centering only.")
-      scaled_x <- x - center_val
+      if (na_action == "omit" && any(na_positions)) {
+        scaled_x[!na_positions] <- calc_x - center_val
+      } else {
+        scaled_x <- calc_x - center_val
+      }
       scaling_params$scale <- 1
     } else {
-      scaled_x <- (x - center_val) / scale_val
+      if (na_action == "omit" && any(na_positions)) {
+        scaled_x[!na_positions] <- (calc_x - center_val) / scale_val
+      } else {
+        scaled_x <- (calc_x - center_val) / scale_val
+      }
       scaling_params$scale <- scale_val
     }
     scaling_params$center <- center_val
     
   } else if (method == "robust") {
     # Robust scaling using median and MAD
-    center_val <- median(x, na.rm = TRUE)
-    scale_val <- mad(x, na.rm = TRUE)
+    center_val <- median(calc_x, na.rm = TRUE)
+    scale_val <- mad(calc_x, na.rm = TRUE)
     
     if (scale_val == 0) {
       warning("MAD is zero. Using IQR scaling.")
-      scale_val <- IQR(x, na.rm = TRUE)
+      scale_val <- IQR(calc_x, na.rm = TRUE)
       if (scale_val == 0) {
         warning("IQR is also zero. Using centering only.")
-        scaled_x <- x - center_val
+        if (na_action == "omit" && any(na_positions)) {
+          scaled_x[!na_positions] <- calc_x - center_val
+        } else {
+          scaled_x <- calc_x - center_val
+        }
         scaling_params$scale <- 1
       } else {
-        scaled_x <- (x - center_val) / scale_val
+        if (na_action == "omit" && any(na_positions)) {
+          scaled_x[!na_positions] <- (calc_x - center_val) / scale_val
+        } else {
+          scaled_x <- (calc_x - center_val) / scale_val
+        }
         scaling_params$scale <- scale_val
       }
     } else {
-      scaled_x <- (x - center_val) / scale_val
+      if (na_action == "omit" && any(na_positions)) {
+        scaled_x[!na_positions] <- (calc_x - center_val) / scale_val
+      } else {
+        scaled_x <- (calc_x - center_val) / scale_val
+      }
       scaling_params$scale <- scale_val
     }
     scaling_params$center <- center_val

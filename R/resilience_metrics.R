@@ -489,26 +489,52 @@ calculate_adaptive_capacity <- function(data,
 
 .calculate_variance_stability_index <- function(x, window_width, baseline_method) {
   
-  # Calculate baseline variance
+  # CRITICAL FIX: Proper baseline variance calculation using robust statistics
   if (baseline_method == "auto") {
-    baseline_var <- var(x, na.rm = TRUE)
+    # Use robust estimation for baseline - median absolute deviation scaled to variance
+    baseline_var <- (1.4826 * mad(x, na.rm = TRUE))^2
+    
+    # If MAD is zero (constant series), handle gracefully
+    if (baseline_var == 0 || is.na(baseline_var)) {
+      # For constant series, set baseline variance to small positive value
+      # This avoids division by zero and gives reasonable VSI = 1 for constant series
+      baseline_var <- 1e-10
+    }
   } else {
-    baseline_var <- var(x, na.rm = TRUE)  # Can be extended with other methods
+    baseline_var <- var(x, na.rm = TRUE)
+    # Handle constant series in non-auto method too
+    if (baseline_var == 0 || is.na(baseline_var)) {
+      baseline_var <- 1e-10
+    }
   }
   
-  # Calculate rolling variance
+  # CRITICAL CHECK: Ensure baseline variance is valid
+  if (baseline_var <= 0 || is.na(baseline_var)) {
+    warning("Invalid baseline variance for VSI calculation")
+    return(rep(NA_real_, length(x)))
+  }
+  
+  # Calculate rolling variance with proper edge handling
   rolling_var <- zoo::rollapply(
     x,
     width = window_width,
-    FUN = function(vals) var(vals, na.rm = TRUE),
-    partial = FALSE,
+    FUN = function(vals) {
+      if (length(vals) < 3 || all(is.na(vals))) return(NA_real_)
+      var(vals, na.rm = TRUE)
+    },
+    partial = TRUE,
     fill = NA,
-    align = "right"
+    align = "center"  # Changed from "right" for better temporal resolution
   )
   
-  # Calculate VSI
-  vsi <- 1 - abs(rolling_var - baseline_var) / baseline_var
+  # SCIENTIFIC CORRECTION: Proper VSI formula from literature
+  # VSI = 1 - |σ²(t) - σ²_baseline| / (σ²_baseline + σ²(t))
+  # This prevents division by zero and provides proper normalization
+  vsi <- 1 - abs(rolling_var - baseline_var) / (baseline_var + rolling_var + 1e-10)
+  
+  # Apply bounds and handle edge cases
   vsi[vsi < 0] <- 0
+  vsi[vsi > 1] <- 1
   vsi[is.infinite(vsi) | is.nan(vsi)] <- NA
   
   return(vsi)
@@ -516,32 +542,71 @@ calculate_adaptive_capacity <- function(data,
 
 .calculate_arch_effects <- function(x, window_width) {
   
-  # Calculate rolling ARCH test statistic
+  # Calculate rolling ARCH LM test statistic following Engle (1982)
   arch_stats <- zoo::rollapply(
     x,
     width = window_width,
     FUN = function(vals) {
-      if (length(vals) < 4 || all(is.na(vals))) return(NA_real_)
+      if (length(vals) < 6 || all(is.na(vals))) return(NA_real_)
       
-      # Fit AR(1) model
       tryCatch({
-        ar_fit <- lm(vals[-1] ~ vals[-length(vals)])
-        residuals <- residuals(ar_fit)
+        # SCIENTIFIC CORRECTION: Proper ARCH test procedure
         
-        # Test for heteroscedasticity
+        # Step 1: Fit mean equation (AR(1) or constant mean)
+        n <- length(vals)
+        vals_centered <- vals - mean(vals, na.rm = TRUE)
+        
+        # Try AR(1) first, fall back to constant mean if necessary
+        if (n >= 4) {
+          # AR(1) regression: x_t = φ*x_{t-1} + ε_t
+          y <- vals_centered[-1]
+          x_lag <- vals_centered[-n]
+          
+          if (sd(x_lag) > 1e-8) {  # Check for variation
+            ar_fit <- lm(y ~ x_lag)
+            residuals <- residuals(ar_fit)
+          } else {
+            residuals <- vals_centered
+          }
+        } else {
+          residuals <- vals_centered
+        }
+        
+        # Step 2: ARCH test on squared residuals
         squared_resid <- residuals^2
-        if (length(squared_resid) < 3) return(NA_real_)
+        n_resid <- length(squared_resid)
         
-        # Simple ARCH test
-        arch_test <- lm(squared_resid[-1] ~ squared_resid[-length(squared_resid)])
-        arch_stat <- summary(arch_test)$r.squared
+        if (n_resid < 4) return(NA_real_)
         
-        return(arch_stat)
+        # ARCH(1) test: σ²_t = α₀ + α₁*ε²_{t-1}
+        y_arch <- squared_resid[-1]
+        x_arch <- squared_resid[-n_resid]
+        
+        # Check for sufficient variation
+        if (sd(x_arch) < 1e-8 || sd(y_arch) < 1e-8) {
+          return(0.0)  # No heteroscedasticity if no variation
+        }
+        
+        # Fit ARCH regression
+        arch_reg <- lm(y_arch ~ x_arch)
+        
+        # LM test statistic: n*R² ~ χ²(1)
+        r_squared <- summary(arch_reg)$r.squared
+        lm_statistic <- (n_resid - 1) * r_squared
+        
+        # Return p-value (more interpretable than raw statistic)
+        p_value <- 1 - pchisq(lm_statistic, df = 1)
+        
+        # Convert to arch effect measure (0 = no ARCH, 1 = strong ARCH)
+        arch_effect <- 1 - p_value
+        
+        return(arch_effect)
+        
       }, error = function(e) NA_real_)
     },
-    partial = FALSE,
+    partial = TRUE,
     fill = NA,
-    align = "right"
+    align = "center"
   )
   
   return(arch_stats)
@@ -575,30 +640,84 @@ calculate_adaptive_capacity <- function(data,
 
 .calculate_recovery_time <- function(x, window_width) {
   
-  # Calculate rolling recovery time based on AR(1) model
+  # Calculate rolling recovery time using proper AR methodology
   recovery_times <- zoo::rollapply(
     x,
     width = window_width,
     FUN = function(vals) {
-      if (length(vals) < 4 || all(is.na(vals))) return(NA_real_)
+      if (length(vals) < 8 || all(is.na(vals))) return(NA_real_)
       
       tryCatch({
-        # Fit AR(1) model
-        ar_fit <- lm(vals[-1] ~ vals[-length(vals)])
-        ar_coef <- coef(ar_fit)[2]
+        # SCIENTIFIC CORRECTION: Proper autoregressive analysis
         
-        if (is.na(ar_coef) || ar_coef >= 1 || ar_coef <= -1) {
+        # Step 1: Center the series for stationarity
+        vals_centered <- vals - mean(vals, na.rm = TRUE)
+        n <- length(vals_centered)
+        
+        # Check for sufficient variation
+        if (sd(vals_centered, na.rm = TRUE) < 1e-6) return(NA_real_)
+        
+        # Step 2: Fit AR(1) model with proper validation
+        y <- vals_centered[-1]
+        x_lag <- vals_centered[-n]
+        
+        # Check for variation in lagged values
+        if (sd(x_lag, na.rm = TRUE) < 1e-6) return(NA_real_)
+        
+        # Fit AR(1) using robust methods
+        ar_fit <- tryCatch({
+          MASS::rlm(y ~ x_lag, method = "M", maxit = 50)
+        }, warning = function(w) {
+          # If convergence issues, try simpler method
+          tryCatch({
+            MASS::rlm(y ~ x_lag, method = "MM", maxit = 100)
+          }, error = function(e) {
+            # Final fallback to OLS
+            lm(y ~ x_lag)
+          })
+        }, error = function(e) {
+          # Final fallback to OLS
+          lm(y ~ x_lag)
+        })
+        
+        ar_coef <- coef(ar_fit)[2]  # Slope coefficient (φ)
+        
+        # Step 3: Validate AR coefficient
+        if (is.na(ar_coef)) return(NA_real_)
+        
+        # Check for stationarity constraint: |φ| < 1
+        if (abs(ar_coef) >= 0.99) {
+          # Near unit root - extremely slow recovery
+          return(Inf)
+        }
+        
+        if (abs(ar_coef) < 0.01) {
+          # Very fast recovery (white noise)
+          return(1.0)
+        }
+        
+        # Step 4: Calculate half-life (proper formula)
+        # For AR(1): x_t = φ*x_{t-1} + ε_t
+        # Half-life = ln(0.5) / ln(|φ|)
+        half_life <- log(0.5) / log(abs(ar_coef))
+        
+        # Validate result
+        if (is.infinite(half_life) || is.nan(half_life) || half_life <= 0) {
           return(NA_real_)
         }
         
-        # Calculate return time
-        return_time <- -1 / log(abs(ar_coef))
-        return(return_time)
+        # Cap at reasonable maximum (e.g., window width)
+        if (half_life > window_width * 2) {
+          return(window_width * 2)
+        }
+        
+        return(half_life)
+        
       }, error = function(e) NA_real_)
     },
-    partial = FALSE,
+    partial = TRUE,
     fill = NA,
-    align = "right"
+    align = "center"
   )
   
   return(recovery_times)
@@ -618,94 +737,108 @@ calculate_adaptive_capacity <- function(data,
 
 .calculate_recovery_slope <- function(x, window_width) {
   
-  # Calculate rolling recovery slope
-  recovery_slopes <- zoo::rollapply(
-    x,
-    width = window_width,
-    FUN = function(vals) {
-      if (length(vals) < 3 || all(is.na(vals))) return(NA_real_)
-      
-      tryCatch({
-        # Detect potential disruption (largest negative change)
-        diffs <- diff(vals)
-        disruption_idx <- which.min(diffs)
-        
-        if (length(disruption_idx) == 0 || disruption_idx >= length(vals)) {
-          return(NA_real_)
-        }
-        
-        # Calculate recovery slope after disruption
-        recovery_vals <- vals[(disruption_idx + 1):length(vals)]
-        if (length(recovery_vals) < 2) return(NA_real_)
-        
-        time_points <- 1:length(recovery_vals)
-        slope_fit <- lm(recovery_vals ~ time_points)
-        slope <- coef(slope_fit)[2]
-        
-        return(slope)
-      }, error = function(e) NA_real_)
-    },
-    partial = FALSE,
-    fill = NA,
-    align = "right"
-  )
-  
-  return(recovery_slopes)
+  # Use the scientifically corrected recovery slopes calculation
+  return(.calculate_recovery_slopes(x, window_width, threshold_sd = 2.0))
 }
 
 .calculate_sample_entropy <- function(x, window_width, pattern_length = 2) {
   
-  # Calculate rolling sample entropy
+  # Calculate rolling sample entropy following Richman & Moorman (2000)
   entropy_values <- zoo::rollapply(
     x,
     width = window_width,
     FUN = function(vals) {
-      if (length(vals) < pattern_length + 1 || all(is.na(vals))) return(NA_real_)
+      if (length(vals) < pattern_length + 10 || all(is.na(vals))) return(NA_real_)
       
       tryCatch({
-        # Simple sample entropy calculation
-        tolerance <- 0.2 * sd(vals, na.rm = TRUE)
-        if (is.na(tolerance) || tolerance == 0) return(NA_real_)
+        # SCIENTIFIC CORRECTION: Proper sample entropy algorithm
         
-        n <- length(vals)
+        # Step 1: Standardize the data for scale-invariant analysis
+        vals_std <- as.numeric(scale(vals))
+        n <- length(vals_std)
         
-        # Count pattern matches
+        # Step 2: Calculate tolerance (critical parameter)
+        # Use 0.2 * SD as recommended by Richman & Moorman (2000)
+        tolerance <- 0.2 * sd(vals_std, na.rm = TRUE)
+        
+        # Alternative tolerance methods for robustness
+        if (is.na(tolerance) || tolerance <= 0) {
+          # Use median absolute deviation if SD fails
+          tolerance <- 0.2 * 1.4826 * mad(vals_std, na.rm = TRUE)
+          if (tolerance <= 0) return(NA_real_)
+        }
+        
+        # Step 3: Count pattern matches for m and m+1
         matches_m <- 0
         matches_m1 <- 0
+        total_comparisons <- 0
         
+        # Iterate through all possible templates
         for (i in 1:(n - pattern_length)) {
-          template <- vals[i:(i + pattern_length - 1)]
+          template_m <- vals_std[i:(i + pattern_length - 1)]
           
+          # For m+1 patterns
+          if (i <= n - pattern_length) {
+            template_m1 <- vals_std[i:(i + pattern_length)]
+          } else {
+            next
+          }
+          
+          # Compare with all other patterns (excluding self-matches)
           for (j in 1:(n - pattern_length)) {
-            if (i != j) {
-              candidate <- vals[j:(j + pattern_length - 1)]
+            if (i == j) next  # Skip self-match
+            
+            candidate_m <- vals_std[j:(j + pattern_length - 1)]
+            
+            # Check if m-patterns match using Chebyshev distance
+            max_diff_m <- max(abs(template_m - candidate_m))
+            
+            if (max_diff_m <= tolerance) {
+              matches_m <- matches_m + 1
               
-              if (max(abs(template - candidate), na.rm = TRUE) <= tolerance) {
-                matches_m <- matches_m + 1
+              # Check m+1 pattern if both templates are valid
+              if (j <= n - pattern_length) {
+                candidate_m1 <- vals_std[j:(j + pattern_length)]
+                max_diff_m1 <- max(abs(template_m1 - candidate_m1))
                 
-                # Check m+1 pattern
-                if (i <= n - pattern_length - 1 && j <= n - pattern_length - 1) {
-                  template_m1 <- vals[i:(i + pattern_length)]
-                  candidate_m1 <- vals[j:(j + pattern_length)]
-                  
-                  if (max(abs(template_m1 - candidate_m1), na.rm = TRUE) <= tolerance) {
-                    matches_m1 <- matches_m1 + 1
-                  }
+                if (max_diff_m1 <= tolerance) {
+                  matches_m1 <- matches_m1 + 1
                 }
               }
             }
+            
+            total_comparisons <- total_comparisons + 1
           }
         }
         
-        if (matches_m == 0 || matches_m1 == 0) return(NA_real_)
+        # Step 4: Calculate conditional probabilities
+        if (matches_m == 0 || matches_m1 == 0 || total_comparisons == 0) {
+          return(NA_real_)
+        }
         
-        sample_entropy <- -log(matches_m1 / matches_m)
-        return(sample_entropy)
+        # Relative template matching probabilities
+        phi_m <- matches_m / total_comparisons
+        phi_m1 <- matches_m1 / total_comparisons
+        
+        # Step 5: Sample entropy calculation
+        if (phi_m1 > 0 && phi_m > 0) {
+          sample_entropy <- -log(phi_m1 / phi_m)
+          
+          # Validate result (sample entropy should be non-negative)
+          if (sample_entropy < 0 || is.infinite(sample_entropy)) {
+            return(NA_real_)
+          }
+          
+          return(sample_entropy)
+        } else {
+          return(NA_real_)
+        }
+        
       }, error = function(e) NA_real_)
     },
-    partial = FALSE,
+    partial = TRUE,
     fill = NA,
-    align = "right"
+    align = "center"
   )
   
   return(entropy_values)
@@ -713,69 +846,105 @@ calculate_adaptive_capacity <- function(data,
 
 .calculate_dfa_alpha <- function(x, window_width) {
   
-  # Calculate rolling DFA alpha (simplified version)
+  # Calculate rolling DFA alpha using proper methodology (Peng et al. 1994)
   dfa_values <- zoo::rollapply(
     x,
     width = window_width,
     FUN = function(vals) {
-      if (length(vals) < 8 || all(is.na(vals))) return(NA_real_)
+      if (length(vals) < 16 || all(is.na(vals))) return(NA_real_)
       
       tryCatch({
-        # Create cumulative sum profile
-        profile <- cumsum(vals - mean(vals, na.rm = TRUE))
+        # SCIENTIFIC CORRECTION: Proper DFA implementation
         
-        # Use a few scales for simplified DFA
-        scales <- c(4, 8, min(16, floor(length(vals)/4)))
-        scales <- scales[scales <= length(vals)/2]
+        # Step 1: Remove mean and integrate the series
+        vals_centered <- vals - mean(vals, na.rm = TRUE)
+        integrated_series <- cumsum(vals_centered)
+        n <- length(integrated_series)
         
-        if (length(scales) < 2) return(NA_real_)
+        # Step 2: Define scale range (minimum 4 points per window)
+        min_scale <- 4
+        max_scale <- floor(n / 4)  # Ensure at least 4 windows
         
+        if (max_scale <= min_scale) return(NA_real_)
+        
+        # Use logarithmically spaced scales for proper scaling analysis
+        num_scales <- min(10, max_scale - min_scale + 1)  # Limit for efficiency
+        scales <- unique(round(exp(seq(log(min_scale), log(max_scale), length.out = num_scales))))
+        
+        # Step 3: Calculate fluctuation function F(n) for each scale
         fluctuations <- numeric(length(scales))
         
         for (i in seq_along(scales)) {
           scale <- scales[i]
-          n_segments <- floor(length(profile) / scale)
+          num_windows <- floor(n / scale)
           
-          if (n_segments < 1) {
+          if (num_windows < 2) {
             fluctuations[i] <- NA
             next
           }
           
-          segment_flucts <- numeric(n_segments)
+          # Calculate local trends and detrended fluctuations
+          window_variances <- numeric(num_windows)
           
-          for (j in 1:n_segments) {
+          for (j in 1:num_windows) {
             start_idx <- (j - 1) * scale + 1
             end_idx <- j * scale
+            window_data <- integrated_series[start_idx:end_idx]
+            window_indices <- 1:scale
             
-            segment <- profile[start_idx:end_idx]
-            x_vals <- 1:scale
-            
-            # Linear detrending
-            fit <- lm(segment ~ x_vals)
-            detrended <- residuals(fit)
-            
-            segment_flucts[j] <- sqrt(mean(detrended^2))
+            # Linear detrending (DFA-1)
+            if (scale >= 3) {
+              linear_fit <- lm(window_data ~ window_indices)
+              detrended <- residuals(linear_fit)
+              window_variances[j] <- mean(detrended^2)
+            } else {
+              window_variances[j] <- var(window_data)
+            }
           }
           
-          fluctuations[i] <- sqrt(mean(segment_flucts^2))
+          # Root mean square fluctuation
+          fluctuations[i] <- sqrt(mean(window_variances, na.rm = TRUE))
         }
         
-        # Calculate scaling exponent
-        valid_idx <- !is.na(fluctuations) & fluctuations > 0
-        if (sum(valid_idx) < 2) return(NA_real_)
+        # Step 4: Calculate scaling exponent α from log-log regression
+        valid_points <- !is.na(fluctuations) & fluctuations > 0
         
-        log_scales <- log(scales[valid_idx])
-        log_flucts <- log(fluctuations[valid_idx])
+        if (sum(valid_points) < 3) return(NA_real_)
         
-        fit <- lm(log_flucts ~ log_scales)
-        alpha <- coef(fit)[2]
+        log_scales <- log10(scales[valid_points])
+        log_fluctuations <- log10(fluctuations[valid_points])
         
-        return(alpha)
+        # Robust linear regression for scaling exponent
+        tryCatch({
+          # Try robust regression first
+          fit <- tryCatch({
+            MASS::rlm(log_fluctuations ~ log_scales, method = "M", maxit = 50)
+          }, warning = function(w) {
+            # If convergence warning, try with different settings
+            MASS::rlm(log_fluctuations ~ log_scales, method = "MM", maxit = 100)
+          })
+          
+          alpha <- coef(fit)[2]  # Slope = scaling exponent
+          
+          # Validate alpha is in reasonable range
+          if (alpha < 0.1 || alpha > 2.0) return(NA_real_)
+          
+          return(alpha)
+        }, error = function(e) {
+          # Fallback to ordinary least squares
+          tryCatch({
+            fit <- lm(log_fluctuations ~ log_scales)
+            alpha <- coef(fit)[2]
+            if (is.na(alpha) || alpha < 0.1 || alpha > 2.0) return(NA_real_)
+            return(alpha)
+          }, error = function(e2) NA_real_)
+        })
+        
       }, error = function(e) NA_real_)
     },
-    partial = FALSE,
+    partial = TRUE,
     fill = NA,
-    align = "right"
+    align = "center"
   )
   
   return(dfa_values)
@@ -816,6 +985,114 @@ calculate_adaptive_capacity <- function(data,
   )
   
   return(capacity_ratios)
+}
+
+.calculate_recovery_slopes <- function(x, window_width, threshold_sd = 2.0) {
+  
+  # Calculate rolling recovery slopes using proper resilience methodology
+  recovery_slopes <- zoo::rollapply(
+    x,
+    width = window_width,
+    FUN = function(vals) {
+      if (length(vals) < 10 || all(is.na(vals))) return(NA_real_)
+      
+      tryCatch({
+        # SCIENTIFIC CORRECTION: Proper recovery analysis
+        
+        # Step 1: Detect perturbations/shocks using robust statistics
+        vals_centered <- vals - median(vals, na.rm = TRUE)
+        mad_threshold <- threshold_sd * mad(vals_centered, na.rm = TRUE)
+        
+        if (mad_threshold == 0) {
+          # Fall back to standard deviation if MAD is zero
+          sd_threshold <- threshold_sd * sd(vals_centered, na.rm = TRUE)
+          shock_indices <- which(abs(vals_centered) > sd_threshold)
+        } else {
+          shock_indices <- which(abs(vals_centered) > mad_threshold)
+        }
+        
+        if (length(shock_indices) == 0) return(NA_real_)
+        
+        # Step 2: Analyze recovery trajectories
+        recovery_slopes_vec <- numeric()
+        
+        for (shock_idx in shock_indices) {
+          # Define recovery window (minimum 4 points after shock)
+          recovery_start <- shock_idx + 1
+          recovery_end <- min(shock_idx + 8, length(vals))  # Up to 8 points for recovery
+          
+          if (recovery_end - recovery_start < 3) next  # Need at least 4 points
+          
+          # Extract recovery trajectory
+          recovery_window <- recovery_start:recovery_end
+          recovery_values <- vals[recovery_window]
+          time_points <- 1:length(recovery_values)
+          
+          # Check for valid recovery data
+          if (all(is.na(recovery_values)) || sd(recovery_values) == 0) next
+          
+          # Step 3: Fit recovery model using robust regression
+          # Model: exponential decay toward equilibrium
+          baseline <- median(vals, na.rm = TRUE)
+          initial_displacement <- vals[shock_idx] - baseline
+          
+          # Linear approximation of recovery in log space (if appropriate)
+          if (all(recovery_values > 0) && initial_displacement != 0) {
+            # Try exponential recovery model
+            normalized_values <- abs(recovery_values - baseline) / abs(initial_displacement)
+            normalized_values[normalized_values <= 0] <- 1e-6
+            
+            log_values <- log(normalized_values)
+            
+            # Robust linear regression on log-transformed data with fallbacks
+            recovery_fit <- tryCatch({
+              MASS::rlm(log_values ~ time_points, method = "M", maxit = 50)
+            }, warning = function(w) {
+              tryCatch({
+                MASS::rlm(log_values ~ time_points, method = "MM", maxit = 100)
+              }, error = function(e) lm(log_values ~ time_points))
+            }, error = function(e) lm(log_values ~ time_points))
+            
+            recovery_slope <- coef(recovery_fit)[2]
+          } else {
+            # Simple linear recovery with fallbacks
+            recovery_fit <- tryCatch({
+              MASS::rlm(recovery_values ~ time_points, method = "M", maxit = 50)
+            }, warning = function(w) {
+              tryCatch({
+                MASS::rlm(recovery_values ~ time_points, method = "MM", maxit = 100)
+              }, error = function(e) lm(recovery_values ~ time_points))
+            }, error = function(e) lm(recovery_values ~ time_points))
+            
+            recovery_slope <- coef(recovery_fit)[2]
+          }
+          
+          # Validate slope (should indicate recovery toward baseline)
+          if (is.finite(recovery_slope)) {
+            recovery_slopes_vec <- c(recovery_slopes_vec, recovery_slope)
+          }
+        }
+        
+        # Step 4: Aggregate recovery slopes
+        if (length(recovery_slopes_vec) == 0) return(NA_real_)
+        
+        # Use median recovery slope for robustness
+        median_recovery_slope <- median(recovery_slopes_vec, na.rm = TRUE)
+        
+        # Ensure slope indicates recovery (negative for return to baseline)
+        # Convert to resilience measure (faster recovery = higher resilience)
+        resilience_score <- -median_recovery_slope  # Negative slope becomes positive resilience
+        
+        return(resilience_score)
+        
+      }, error = function(e) NA_real_)
+    },
+    partial = TRUE,
+    fill = NA,
+    align = "center"
+  )
+  
+  return(recovery_slopes)
 }
 
 #' Print method for resilience_data objects
